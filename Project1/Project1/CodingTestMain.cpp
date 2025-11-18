@@ -49,9 +49,10 @@ public:
 	glm::vec3 size;
 	glm::vec3 color;
 	float speed;
+	float originalHeight;
 
-	Cuboid(const glm::vec3& pos, const glm::vec3& sz, const glm::vec3& color, float spd )
-		: position(pos), size(sz), color(color),speed(spd) {
+	Cuboid(const glm::vec3& pos, const glm::vec3& sz, const glm::vec3& color, float spd)
+		: position(pos), size(sz), color(color), speed(spd), originalHeight(sz.y) {
 	}
 };
 
@@ -64,9 +65,12 @@ float cameraOrbitAngle = 0.0f;
 float cameraOrbitRadius = 7.0f; 
 float cameraOrbitHeight = 5.0f; 
 
+float cameraEyeZ = 0.0f;
+
 class CuboidManager {
 public:
 	std::vector<Cuboid> cuboids;
+	bool isLow = false;
 
 	CuboidManager(int x, int y) {
 		std::random_device rd;
@@ -94,6 +98,21 @@ public:
 			startZ += 0.2f; 
 		}
 		max_x = startX;
+	}
+
+	void toggleLowHeight(float lowHeight = 0.2f) {
+		if (!isLow) {
+			for (auto& cuboid : cuboids) {
+				cuboid.size.y = lowHeight;
+			}
+			isLow = true;
+		}
+		else {
+			for (auto& cuboid : cuboids) {
+				cuboid.size.y = cuboid.originalHeight;
+			}
+			isLow = false;
+		}
 	}
 
 	glm::vec3 getCenter() const {
@@ -237,12 +256,12 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 		}
 		break;
 	case 'z':
-		command_m = false;
-		glutPostRedisplay(); // 화면 갱신
+		cameraEyeZ -= 0.1f;
+		glutPostRedisplay();
 		break;
 	case 'Z':
-		command_m = false;
-		glutPostRedisplay(); // 화면 갱신
+		cameraEyeZ += 0.1f;
+		glutPostRedisplay();
 		break;
 	case 'y':
 		cameraOrbitAngle -= glm::radians(5.0f);
@@ -250,6 +269,13 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 		break;
 	case 'Y':
 		cameraOrbitAngle += glm::radians(5.0f);
+		glutPostRedisplay();
+		break;
+	case 'v':
+		command_m = false;
+		if (cuboidManager) {
+			cuboidManager->toggleLowHeight(0.2f);
+		}
 		glutPostRedisplay();
 		break;
 	case'q':
@@ -357,7 +383,7 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 	glm::vec3 center = cuboidManager->getCenter();
 	// 공전 각도에 따라 카메라 위치 계산
 	float camX = center.x + cameraOrbitRadius * cos(cameraOrbitAngle);
-	float camZ = center.z + cameraOrbitRadius * sin(cameraOrbitAngle);
+	float camZ = center.z + cameraOrbitRadius * sin(cameraOrbitAngle) + cameraEyeZ;
 	float camY = center.y + cameraOrbitHeight;
 	glm::vec3 camera_eye = glm::vec3(camX, camY, camZ);
 	glm::vec3 camera_at = center;
