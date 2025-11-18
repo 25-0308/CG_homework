@@ -20,10 +20,8 @@ void main()
     float diffuseLight = max(dot(normalVector, lightDir), 0.0);
     vec3 diffuse = diffuseLight * lightColor;
     
-    vec3 result = ambient * objectColor;  
-    if (lightOn) {
-        result += diffuse * objectColor; 
-    }
+    vec3 result = ambient * objectColor; 
+    result += diffuse * objectColor; 
 
     FragColor = vec4(result, 1.0f);
 }
