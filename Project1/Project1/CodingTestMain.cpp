@@ -40,6 +40,7 @@ GLuint vao, vbo[2];
 
 bool light_Frag = true;
 bool toggle_viewport = false;
+bool command_y = false;
 int x, y;
 
 class Cuboid {
@@ -54,10 +55,14 @@ public:
 	}
 };
 
-float max_x = 0.0f;
+float max_x = 0.0f;	
 bool command_m = false;
 
 float animationTime = 0.0f;
+
+float cameraOrbitAngle = 0.0f; 
+float cameraOrbitRadius = 7.0f; 
+float cameraOrbitHeight = 5.0f; 
 
 class CuboidManager {
 public:
@@ -114,7 +119,7 @@ public:
 
 			GLint locModel = glGetUniformLocation(shaderProgramID, "model");
 			glUniformMatrix4fv(locModel, 1, GL_FALSE, glm::value_ptr(model));
-
+				
 			GLint objColorLocation = glGetUniformLocation(shaderProgramID, "objectColor");
 			glUniform3f(objColorLocation, cuboid.color.r, cuboid.color.g, cuboid.color.b);
 
@@ -180,6 +185,22 @@ int main(int argc, char** argv)
 	
 	std::cout << "x y 좌표 입력: ";
 	std::cin >> x >> y;
+	std::cout << "o : 직각투영" << std::endl;
+	std::cout << "p : 원근투영" << std::endl;
+	std::cout << "z : z축 감소" << std::endl;
+	std::cout << "Z : z축 증가" << std::endl;
+	std::cout << "m : 애니메이션 정지" << std::endl;
+	std::cout << "M : 애니메이션 작동" << std::endl;
+	std::cout << "y : 음 방향 공전" << std::endl;
+	std::cout << "Y : 양 방향 공전" << std::endl;
+	std::cout << "r : 미로 제작" << std::endl;
+	std::cout << "v : 육면체 이동" << std::endl;
+	std::cout << "s : 미로 내 객체 생성" << std::endl;
+	std::cout << "Y : 양 방향 공전" << std::endl;
+	std::cout << "Y : 양 방향 공전" << std::endl;
+	std::cout << "c : 모든 값 초기화" << std::endl;
+	std::cout << "q : 프로그램 종료" << std::endl;
+
 
 	cuboidManager = new CuboidManager(x, y);
 
@@ -197,9 +218,6 @@ void updateAnimation(int value) {
 
 GLvoid keyboard(unsigned char key, int x, int y) {
 	switch (key) {
-	case'q':
-		exit(0);
-		break;
 	case 'o':
 		toggle_viewport = false;
 		glutPostRedisplay(); // 화면 갱신
@@ -217,6 +235,26 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 			command_m = true;
 			glutTimerFunc(0, updateAnimation, 0);
 		}
+		break;
+	case 'z':
+		command_m = false;
+		glutPostRedisplay(); // 화면 갱신
+		break;
+	case 'Z':
+		command_m = false;
+		glutPostRedisplay(); // 화면 갱신
+		break;
+	case 'y':
+		cameraOrbitAngle -= glm::radians(5.0f);
+		glutPostRedisplay();
+		break;
+	case 'Y':
+		cameraOrbitAngle += glm::radians(5.0f);
+		glutPostRedisplay();
+		break;
+	case'q':
+	case'Q':
+		exit(0);
 		break;
 	}
 }
@@ -316,11 +354,16 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 	glUseProgram(shaderProgramID);
 	glBindVertexArray(vao);
 
-	glm::vec3 camera_eye = glm::vec3(5.0f, 5.0f, 5.0f);
-	glm::vec3 camera_at = cuboidManager->getCenter();
+	glm::vec3 center = cuboidManager->getCenter();
+	// 공전 각도에 따라 카메라 위치 계산
+	float camX = center.x + cameraOrbitRadius * cos(cameraOrbitAngle);
+	float camZ = center.z + cameraOrbitRadius * sin(cameraOrbitAngle);
+	float camY = center.y + cameraOrbitHeight;
+	glm::vec3 camera_eye = glm::vec3(camX, camY, camZ);
+	glm::vec3 camera_at = center;
 	glm::vec3 camera_up = glm::vec3(0.0f, 1.0f, 0.0f);
 
-	glm::mat4 view = glm::lookAt (
+	glm::mat4 view = glm::lookAt(
 		camera_eye,
 		camera_at,
 		camera_up
