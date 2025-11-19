@@ -289,6 +289,9 @@ public:
 		if (cols - 2 >= 0) {
 			maze[midY][cols - 2] = false;
 		}
+		if (cols - 3 >= 0) {
+			maze[midY][cols - 3] = false;
+		}
 
 		// 5. Cuboid 벡터 업데이트
 		updateCuboidsFromMaze();
@@ -322,7 +325,7 @@ public:
 				else { // 길 (Path)
 					// 시작점인지 확인 (1, 1)
 					if (j == 1 && i == 1) {
-						cuboid.size.y = cuboid.min_height;
+						cuboid.size.y = 0.0f;
 						cuboid.color = glm::vec3(0.0f, 1.0f, 0.0f); // 초록색 시작점
 					}
 					else {
@@ -862,6 +865,7 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 	int minimapWidth = 300;
 	int minimapHeight = 300;
 	glViewport(1280 - minimapWidth - 10, 960 - minimapHeight - 10, minimapWidth, minimapHeight);
+	glDisable(GL_DEPTH_TEST);
 
 	center = cuboidManager->getCenter();
 	glm::vec3 top_eye = glm::vec3(center.x, 10.0f, center.z);
@@ -880,7 +884,7 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 	glUniform3f(viewPosLocation, top_eye.x, top_eye.y, top_eye.z);
 
 	cuboidManager->draw(shaderProgramID, vao);
-
+	glEnable(GL_DEPTH_TEST);
 	glViewport(0, 0, 1280, 960);
 
 	glutPostRedisplay();
