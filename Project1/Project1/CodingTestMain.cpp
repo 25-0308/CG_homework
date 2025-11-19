@@ -22,6 +22,7 @@
 #pragma warning(disable: 4711 4710 4100)
 
 GLvoid keyboard(unsigned char, int, int);
+GLvoid specialKeyboard(int, int, int);
 GLvoid drawScene(GLvoid);
 GLvoid Reshape(int w, int h);
 void make_vertexShaders();
@@ -49,8 +50,14 @@ public:
 	glm::vec3 color;
 	bool isIndependent;
 
+	glm::vec3 targetPosition;
+	float moveSpeed = 4.0f;
+	// 🌟 추가: 이동 상태 플래그
+	bool isMoving = false;
+
 	MovableObject(const glm::vec3& pos, float s, const glm::vec3& col, bool independent = true)
 		: position(pos), size(s), color(col), isIndependent(independent) {
+		targetPosition = pos;
 	}
 
 	void draw(GLuint shaderProgramID, GLuint vao) {
@@ -99,6 +106,7 @@ float cameraEyeZ = 0.0f;
 bool maze_generated = false;
 bool player_created = false;
 bool reset_animation = false;
+bool first_person_mode = false;
 
 class CuboidManager {
 public:
@@ -145,23 +153,80 @@ public:
 	}
 	void createPlayer() {
 		if (player) {
-			delete player; // 기존 플레이어가 있다면 삭제
+			delete player;
 		}
 
 		player = new MovableObject(glm::vec3(0.0f), 0.18f, glm::vec3(1.0f, 1.0f, 0.0f), true);
 
-		// 미로가 생성되어 있다면 시작 위치로 배치
 		if (is_maze_mode) {
 			float cell_size = 0.2f;
+
 			glm::vec3 start_pos(
-				1.0f * cell_size + cell_size / 2.0f,
+				0.0f * cell_size + cell_size,
+
 				player->size / 2.0f,
-				1.0f * cell_size + cell_size / 2.0f
+
+				0.0f * cell_size + cell_size
 			);
 			player->position = start_pos;
+			player->targetPosition = start_pos;
+			player->isMoving = false;
 		}
-
 	}
+
+	void updatePlayerMovement(float deltaTime) {
+		if (!player) return;
+
+		glm::vec3 currentPos = player->position;
+		glm::vec3 targetPos = player->targetPosition;
+
+		glm::vec3 moveVector = targetPos - currentPos;
+		float distance = glm::length(moveVector);
+
+		if (distance > 0.001f) {
+			player->isMoving = true;
+
+			const float FIXED_MOVE_DISTANCE = 0.01f;
+			float maxMove = FIXED_MOVE_DISTANCE;
+
+			if (distance > maxMove) {
+				player->position += glm::normalize(moveVector) * maxMove;
+			}
+			else {
+				player->position = targetPos;
+				player->isMoving = false; 
+			}
+		}
+		else {
+			player->isMoving = false;
+		}
+	}
+
+	void movePlayer(float deltaX, float deltaZ) {
+		if (!player || !is_maze_mode || player->isMoving) return;
+
+		float cell_size = 0.2f;
+		int currentGridX = (int)round((player->targetPosition.x / cell_size) );
+		int currentGridZ = (int)round((player->targetPosition.z / cell_size) );
+
+		int newGridX = currentGridX + (int)deltaX;
+		int newGridZ = currentGridZ + (int)deltaZ;
+
+		// 경계 체크
+		if (newGridX >= 0 && newGridX < cols && newGridZ >= 0 && newGridZ < rows) {
+			// 벽 충돌 체크
+			if (!maze[newGridZ][newGridX]) {
+				glm::vec3 newTargetPos(
+					(newGridX ) * cell_size,
+					player->size / 2.0f,
+					(newGridZ ) * cell_size
+				);
+
+				player->targetPosition = newTargetPos;
+			}
+		}
+	}
+
 	// 미로 생성 함수 (DFS 기반, 짝수/홀수 크기 모두 지원)
 	void generateMaze() {
 		// 1. 모든 셀을 벽으로 초기화
@@ -225,19 +290,19 @@ public:
 			maze[midY][cols - 2] = false;
 		}
 
-		std::cout << "출구 위치: (" << exitPosition.x << ", " << exitPosition.y << ")" << std::endl;
-
 		// 5. Cuboid 벡터 업데이트
 		updateCuboidsFromMaze();
 
 		if (player) {
 			float cell_size = 0.2f;
 			glm::vec3 start_pos(
-				1.0f * cell_size + cell_size / 2.0f,
+				0.0f * cell_size + cell_size,
 				player->size / 2.0f,
-				1.0f * cell_size + cell_size / 2.0f
+				0.0f * cell_size + cell_size
 			);
 			player->position = start_pos;
+			player->targetPosition = start_pos;
+			player->isMoving = false;
 		}
 	}
 
@@ -263,7 +328,7 @@ public:
 					else {
 						// 출구 포함해서 모든 길은 완전히 제거
 						cuboid.size.y = 0.0f;
-						cuboid.color = glm::vec3(0.0f, 0.0f, 0.0f); // 길은 검은색으로
+						cuboid.color = glm::vec3(1.0f, 1.0f, 1.0f); // 길은 검은색으로
 					}
 				}
 			}
@@ -274,7 +339,6 @@ public:
 
 	bool updateFalling(float delta) {
 		bool anyFalling = false;
-		// 미로 모드에서는 낙하 애니메이션 건너뛰기
 		if (is_maze_mode) return false;
 
 		for (auto& cuboid : cuboids) {
@@ -338,7 +402,7 @@ public:
 				drawPos.y = cuboid.fallY;
 			}
 			else {
-				drawPos.y = 0.0f; // 바닥에 고정
+				drawPos.y = 0.0f;
 			}
 
 			glm::mat4 model = glm::translate(glm::mat4(1.0f), drawPos);
@@ -394,6 +458,12 @@ float animation_speed = 0.05f;
 
 void updateAnimation(int value) {
 	static bool firstFalling = true;
+	static GLint lastTime = glutGet(GLUT_ELAPSED_TIME);
+
+	GLint currentTime = glutGet(GLUT_ELAPSED_TIME);
+	float deltaTime = (float)(currentTime - lastTime) / 1000.0f;
+	lastTime = currentTime;
+
 
 	if (reset_animation) {
 		firstFalling = true;
@@ -401,14 +471,14 @@ void updateAnimation(int value) {
 	}
 
 	if (firstFalling && !is_maze_mode) {
-		bool stillFalling = cuboidManager->updateFalling(animation_speed);
+		bool stillFalling = cuboidManager->updateFalling(deltaTime * 1.0f);
 		glutPostRedisplay();
 		if (stillFalling) {
 			glutTimerFunc(16, updateAnimation, 0);
 		}
 		else {
 			firstFalling = false;
-			if (command_m) {
+			if (command_m || is_maze_mode) {
 				glutTimerFunc(16, updateAnimation, 0);
 			}
 		}
@@ -416,7 +486,12 @@ void updateAnimation(int value) {
 	}
 
 	if (command_m || is_maze_mode) {
-		animationTime += animation_speed;
+		animationTime += animation_speed * deltaTime * 1.0f;
+
+		if (is_maze_mode && player_created) {
+			cuboidManager->updatePlayerMovement(deltaTime);
+		}
+
 		glutPostRedisplay();
 		glutTimerFunc(16, updateAnimation, 0);
 	}
@@ -449,6 +524,7 @@ int main(int argc, char** argv)
 
 	InitBuffer();
 	glutKeyboardFunc(keyboard);
+	glutSpecialFunc(specialKeyboard);
 	glutDisplayFunc(drawScene);
 	glutReshapeFunc(Reshape);
 
@@ -468,6 +544,9 @@ int main(int argc, char** argv)
 	std::cout << "s : 미로 내 객체 생성" << std::endl;
 	std::cout << "+ : 애니메이션 속도 증가" << std::endl;
 	std::cout << "- : 애니메이션 속도 감소" << std::endl;
+	std::cout << "1 : 1인칭 시점" << std::endl;
+	std::cout << "3 : 3인칭 시점" << std::endl;
+	std::cout << "방향키 : 플레이어 이동" << std::endl;
 	std::cout << "c : 모든 값 초기화" << std::endl;
 	std::cout << "q : 프로그램 종료" << std::endl;
 
@@ -520,10 +599,7 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 		if (cuboidManager && !maze_generated) {
 			cuboidManager->generateMaze();
 			maze_generated = true;
-			command_m = false; // 미로 생성 시 애니메이션 정지
-		}
-		else if (maze_generated) {
-			// 이미 미로가 생성됨
+			command_m = false; 
 		}
 		glutPostRedisplay();
 		break;
@@ -541,6 +617,7 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 		player_created = false;
 		command_m = false;
 		reset_animation = true;
+		first_person_mode = false;
 
 		// 애니메이션 관련 변수 초기화
 		animationTime = 0.0f;
@@ -575,6 +652,19 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 		else animation_speed = 0.01f;
 		glutPostRedisplay();
 		break;
+	case '1':
+		if (player_created && is_maze_mode) {
+			first_person_mode = true;
+		}
+		glutPostRedisplay();
+		break;
+
+	case '3':
+		if (player_created && is_maze_mode) {
+			first_person_mode = false;
+		}
+		glutPostRedisplay();
+		break;
 	case 'v':
 		command_m = false;
 		if (cuboidManager) {
@@ -587,6 +677,26 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 		exit(0);
 		break;
 	}
+}
+
+GLvoid specialKeyboard(int key, int x, int y) {
+	if (!player_created || !is_maze_mode) return;
+
+	switch (key) {
+	case GLUT_KEY_UP:
+		cuboidManager->movePlayer(0.0f, -1.0f);
+		break;
+	case GLUT_KEY_DOWN:
+		cuboidManager->movePlayer(0.0f, 1.0f);
+		break;
+	case GLUT_KEY_LEFT:
+		cuboidManager->movePlayer(-1.0f, 0.0f);
+		break;
+	case GLUT_KEY_RIGHT:
+		cuboidManager->movePlayer(1.0f, 0.0f);
+		break;
+	}
+	glutPostRedisplay();
 }
 
 const GLfloat cube_vertices[36][3] = {
@@ -684,14 +794,31 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 	glUseProgram(shaderProgramID);
 	glBindVertexArray(vao);
 
-	glm::vec3 center = cuboidManager->getCenter();
-	// 공전 각도에 따라 카메라 위치 계산
-	float camX = center.x + cameraOrbitRadius * cos(cameraOrbitAngle);
-	float camZ = center.z + cameraOrbitRadius * sin(cameraOrbitAngle) + cameraEyeZ;
-	float camY = center.y + cameraOrbitHeight;
-	glm::vec3 camera_eye = glm::vec3(camX, camY, camZ);
-	glm::vec3 camera_at = center;
+	glm::vec3 center;
+	glm::vec3 camera_eye;
+	glm::vec3 camera_at;
 	glm::vec3 camera_up = glm::vec3(0.0f, 1.0f, 0.0f);
+
+	if (player_created && is_maze_mode && cuboidManager->player) {
+		glm::vec3 playerPos = cuboidManager->player->position;
+
+		if (first_person_mode) {
+			camera_eye = playerPos + glm::vec3(0.0f, 0.15f, 0.0f);
+			camera_at = camera_eye + glm::vec3(0.0f, 0.0f, -1.0f);
+		}
+		else {
+			camera_eye = playerPos + glm::vec3(0.0f, 0.8f, 0.8f);
+			camera_at = playerPos;
+		}
+	}
+	else {
+		center = cuboidManager->getCenter();
+		float camX = center.x + cameraOrbitRadius * cos(cameraOrbitAngle);
+		float camZ = center.z + cameraOrbitRadius * sin(cameraOrbitAngle) + cameraEyeZ;
+		float camY = center.y + cameraOrbitHeight;
+		camera_eye = glm::vec3(camX, camY, camZ);
+		camera_at = center;
+	}
 
 	glm::mat4 view = glm::lookAt(
 		camera_eye,
@@ -722,10 +849,8 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 	GLint locprojection = glGetUniformLocation(shaderProgramID, "projection");
 	glUniformMatrix4fv(locprojection, 1, GL_FALSE, glm::value_ptr(projection));
 
-	// 💡 카메라 위치를 fragment shader에 전달 (조명 계산을 위해 필요)
 	GLint viewPosLocation = glGetUniformLocation(shaderProgramID, "viewPos");
 	glUniform3f(viewPosLocation, camera_eye.x, camera_eye.y, camera_eye.z);
-
 
 	GLint locModel = glGetUniformLocation(shaderProgramID, "model");
 	glm::mat4 model = glm::mat4(1.0f);
@@ -738,12 +863,11 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 	int minimapHeight = 300;
 	glViewport(1280 - minimapWidth - 10, 960 - minimapHeight - 10, minimapWidth, minimapHeight);
 
-	// 미니맵 카메라 (Top-Down Orthographic View)
+	center = cuboidManager->getCenter();
 	glm::vec3 top_eye = glm::vec3(center.x, 10.0f, center.z);
 	glm::vec3 top_at = center;
-	glm::vec3 top_up = glm::vec3(0.0f, 0.0f, -1.0f); // Z축 방향으로 아래를 보게
+	glm::vec3 top_up = glm::vec3(0.0f, 0.0f, -1.0f);
 
-	// 미니맵 투영 (미로 전체가 보이도록 크기 조절)
 	float ortho_size_x = max_x / 2.0f + 1.0f;
 	float ortho_size_y = (float)y * 0.2f / 2.0f + 1.0f;
 
@@ -753,17 +877,14 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 	glUniformMatrix4fv(locview, 1, GL_FALSE, glm::value_ptr(top_view));
 	glUniformMatrix4fv(locprojection, 1, GL_FALSE, glm::value_ptr(top_projection));
 
-	// 미니맵에서도 카메라 위치 업데이트 (필요하다면)
 	glUniform3f(viewPosLocation, top_eye.x, top_eye.y, top_eye.z);
 
 	cuboidManager->draw(shaderProgramID, vao);
 
-	// 3. 원래 뷰포트로 복구
 	glViewport(0, 0, 1280, 960);
 
 	glutPostRedisplay();
 	glutSwapBuffers();
-
 }
 
 
