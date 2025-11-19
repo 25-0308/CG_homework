@@ -24,10 +24,12 @@
 GLvoid keyboard(unsigned char, int, int);
 GLvoid specialKeyboard(int, int, int);
 GLvoid drawScene(GLvoid);
+GLvoid mouseMove(int xpos, int ypos);
 GLvoid Reshape(int w, int h);
 void make_vertexShaders();
 void make_fragmentShaders();
 GLuint make_shaderProgram();
+void centerMouse();
 
 void InitBuffer();
 
@@ -52,7 +54,6 @@ public:
 
 	glm::vec3 targetPosition;
 	float moveSpeed = 4.0f;
-	// 🌟 추가: 이동 상태 플래그
 	bool isMoving = false;
 
 	MovableObject(const glm::vec3& pos, float s, const glm::vec3& col, bool independent = true)
@@ -107,6 +108,15 @@ bool maze_generated = false;
 bool player_created = false;
 bool reset_animation = false;
 bool first_person_mode = false;
+
+float cameraYaw = -90.0f; 
+float cameraPitch = 0.0f;
+glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f); // 카메라가 바라보는 방향 벡터
+
+bool firstMouse = true;
+float lastX = 1280.0f / 2.0f;
+float lastY = 960.0f / 2.0f;
+const float sensitivity = 1.0f;
 
 class CuboidManager {
 public:
@@ -202,12 +212,41 @@ public:
 		}
 	}
 
-	void movePlayer(float deltaX, float deltaZ) {
+	void movePlayerRelativeToCamera(const glm::vec3& forward, const glm::vec3& right, int direction) {
 		if (!player || !is_maze_mode || player->isMoving) return;
 
 		float cell_size = 0.2f;
-		int currentGridX = (int)round((player->targetPosition.x / cell_size) );
-		int currentGridZ = (int)round((player->targetPosition.z / cell_size) );
+
+		// 현재 플레이어의 격자 위치 계산
+		int currentGridX = (int)round((player->targetPosition.x / cell_size));
+		int currentGridZ = (int)round((player->targetPosition.z / cell_size));
+
+		glm::vec3 moveDirection(0.0f);
+
+		// 방향에 따른 이동 벡터 계산 (Y축은 무시하고 XZ 평면에서만)
+		switch (direction) {
+		case 0: // 앞으로 (W키 또는 위 방향키)
+			moveDirection = glm::normalize(glm::vec3(forward.x, 0.0f, forward.z));
+			break;
+		case 1: // 뒤로 (S키 또는 아래 방향키)
+			moveDirection = -glm::normalize(glm::vec3(forward.x, 0.0f, forward.z));
+			break;
+		case 2: // 왼쪽 (A키 또는 왼쪽 방향키)
+			moveDirection = -glm::normalize(glm::vec3(right.x, 0.0f, right.z));
+			break;
+		case 3: // 오른쪽 (D키 또는 오른쪽 방향키)
+			moveDirection = glm::normalize(glm::vec3(right.x, 0.0f, right.z));
+			break;
+		}
+
+		// 가장 가까운 격자 방향으로 스냅
+		float deltaX = 0.0f, deltaZ = 0.0f;
+		if (abs(moveDirection.x) > abs(moveDirection.z)) {
+			deltaX = (moveDirection.x > 0) ? 1.0f : -1.0f;
+		}
+		else {
+			deltaZ = (moveDirection.z > 0) ? 1.0f : -1.0f;
+		}
 
 		int newGridX = currentGridX + (int)deltaX;
 		int newGridZ = currentGridZ + (int)deltaZ;
@@ -217,11 +256,10 @@ public:
 			// 벽 충돌 체크
 			if (!maze[newGridZ][newGridX]) {
 				glm::vec3 newTargetPos(
-					(newGridX ) * cell_size,
+					newGridX * cell_size,
 					player->size / 2.0f,
-					(newGridZ ) * cell_size
+					newGridZ * cell_size
 				);
-
 				player->targetPosition = newTargetPos;
 			}
 		}
@@ -361,14 +399,38 @@ public:
 
 	void toggleLowHeight(float lowHeight = 0.2f) {
 		if (!isLow) {
-			for (auto& cuboid : cuboids) {
-				cuboid.size.y = lowHeight;
+			for (int i = 0; i < cuboids.size(); ++i) {
+				auto& cuboid = cuboids[i];
+
+				if (is_maze_mode && !maze.empty()) {
+					int row = i / cols;
+					int col = i % cols;
+
+					if (maze[row][col]) { 
+						cuboid.size.y = lowHeight;
+					}
+				}
+				else {
+					cuboid.size.y = lowHeight;
+				}
 			}
 			isLow = true;
 		}
 		else {
-			for (auto& cuboid : cuboids) {
-				cuboid.size.y = cuboid.originalHeight;
+			for (int i = 0; i < cuboids.size(); ++i) {
+				auto& cuboid = cuboids[i];
+
+				if (is_maze_mode && !maze.empty()) {
+					int row = i / cols;
+					int col = i % cols;
+
+					if (maze[row][col]) { 
+						cuboid.size.y = cuboid.originalHeight;
+					}
+				}
+				else {
+					cuboid.size.y = cuboid.originalHeight;
+				}
 			}
 			isLow = false;
 		}
@@ -528,6 +590,8 @@ int main(int argc, char** argv)
 	InitBuffer();
 	glutKeyboardFunc(keyboard);
 	glutSpecialFunc(specialKeyboard);
+	glutPassiveMotionFunc(mouseMove);
+	glutSetCursor(GLUT_CURSOR_NONE);
 	glutDisplayFunc(drawScene);
 	glutReshapeFunc(Reshape);
 
@@ -557,8 +621,53 @@ int main(int argc, char** argv)
 	cuboidManager = new CuboidManager(x, y);
 
 	glutTimerFunc(0, updateAnimation, 0);
+	centerMouse();
 
 	glutMainLoop();
+}
+
+GLvoid mouseMove(int xpos, int ypos) {
+	if (!player_created || !is_maze_mode || (!first_person_mode && command_m)) return;
+
+	if (firstMouse) {
+		lastX = (float)xpos;
+		lastY = (float)ypos;
+		firstMouse = false;
+	}
+
+	float xoffset = (float)xpos - lastX;
+	float yoffset = lastY - (float)ypos; // Y 좌표는 아래가 큽니다.
+	lastX = (float)xpos;
+	lastY = (float)ypos;
+
+	xoffset *= sensitivity;
+	yoffset *= sensitivity;
+
+	cameraYaw += xoffset;
+	cameraPitch += yoffset;
+
+	// Pitch 각도 제한 (시야가 180도 회전하는 것을 방지)
+	if (cameraPitch > 89.0f)
+		cameraPitch = 89.0f;
+	if (cameraPitch < -89.0f)
+		cameraPitch = -89.0f;
+
+	// 카메라 방향 벡터 계산
+	glm::vec3 front;
+	front.x = cos(glm::radians(cameraYaw)) * cos(glm::radians(cameraPitch));
+	front.y = sin(glm::radians(cameraPitch));
+	front.z = sin(glm::radians(cameraYaw)) * cos(glm::radians(cameraPitch));
+	cameraFront = glm::normalize(front);
+
+	glutPostRedisplay();
+}
+
+void centerMouse() {
+	// 윈도우 중앙 좌표로 마우스 커서를 이동
+	glutWarpPointer(glutGet(GLUT_WINDOW_WIDTH) / 2, glutGet(GLUT_WINDOW_HEIGHT) / 2);
+	lastX = (float)(glutGet(GLUT_WINDOW_WIDTH) / 2);
+	lastY = (float)(glutGet(GLUT_WINDOW_HEIGHT) / 2);
+	firstMouse = true;
 }
 
 
@@ -632,6 +741,14 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 		cameraOrbitHeight = 5.0f;
 		cameraEyeZ = 0.0f;
 
+		//마우스 카메라 변수 초기화
+		cameraYaw = -90.0f;
+		cameraPitch = 0.0f;
+		cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+		firstMouse = true;
+		lastX = 1280.0f / 2.0f;
+		lastY = 960.0f / 2.0f;
+
 		// 뷰포트 초기화
 		toggle_viewport = false;
 
@@ -682,21 +799,25 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 	}
 }
 
+
 GLvoid specialKeyboard(int key, int x, int y) {
 	if (!player_created || !is_maze_mode) return;
 
+	glm::vec3 forward = glm::normalize(glm::vec3(cameraFront.x, 0.0f, cameraFront.z));
+	glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+
 	switch (key) {
 	case GLUT_KEY_UP:
-		cuboidManager->movePlayer(0.0f, -1.0f);
+		cuboidManager->movePlayerRelativeToCamera(forward, right, 0);
 		break;
 	case GLUT_KEY_DOWN:
-		cuboidManager->movePlayer(0.0f, 1.0f);
+		cuboidManager->movePlayerRelativeToCamera(forward, right, 1);
 		break;
 	case GLUT_KEY_LEFT:
-		cuboidManager->movePlayer(-1.0f, 0.0f);
+		cuboidManager->movePlayerRelativeToCamera(forward, right, 2);
 		break;
 	case GLUT_KEY_RIGHT:
-		cuboidManager->movePlayer(1.0f, 0.0f);
+		cuboidManager->movePlayerRelativeToCamera(forward, right, 3);
 		break;
 	}
 	glutPostRedisplay();
@@ -807,14 +928,21 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 
 		if (first_person_mode) {
 			camera_eye = playerPos + glm::vec3(0.0f, 0.15f, 0.0f);
-			camera_at = camera_eye + glm::vec3(0.0f, 0.0f, -1.0f);
+			camera_at = camera_eye + cameraFront;
+
+			centerMouse();
+
 		}
-		else {
-			camera_eye = playerPos + glm::vec3(0.0f, 0.8f, 0.8f);
+		else { 
+			glm::vec3 camOffset = -cameraFront * 0.4f + glm::vec3(0.0f, 0.3f, 0.0f);
+			camera_eye = playerPos + camOffset;
 			camera_at = playerPos;
+
+			centerMouse();
 		}
 	}
 	else {
+		// 기존 카메라 시스템 (플레이어가 없을 때)
 		center = cuboidManager->getCenter();
 		float camX = center.x + cameraOrbitRadius * cos(cameraOrbitAngle);
 		float camZ = center.z + cameraOrbitRadius * sin(cameraOrbitAngle) + cameraEyeZ;
