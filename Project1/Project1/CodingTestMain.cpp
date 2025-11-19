@@ -50,9 +50,11 @@ public:
 	glm::vec3 color;
 	float speed;
 	float originalHeight;
+	float fallY;
+	bool isFalling; 
 
 	Cuboid(const glm::vec3& pos, const glm::vec3& sz, const glm::vec3& color, float spd)
-		: position(pos), size(sz), color(color), speed(spd), originalHeight(sz.y) {
+		: position(pos), size(sz), color(color), speed(spd), originalHeight(sz.y), fallY(5.0f), isFalling(true) {
 	}
 };
 
@@ -100,6 +102,23 @@ public:
 		max_x = startX;
 	}
 
+	bool updateFalling(float delta) {
+		bool anyFalling = false;
+		for (auto& cuboid : cuboids) {
+			if (cuboid.isFalling) {
+				cuboid.fallY -= delta * cuboid.speed * 2.0f; // 속도 조절
+				if (cuboid.fallY <= 0.0f) {
+					cuboid.fallY = 0.0f;
+					cuboid.isFalling = false;
+				}
+				else {
+					anyFalling = true;
+				}
+			}
+		}
+		return anyFalling;
+	}
+
 	void toggleLowHeight(float lowHeight = 0.2f) {
 		if (!isLow) {
 			for (auto& cuboid : cuboids) {
@@ -129,16 +148,19 @@ public:
 	void draw(GLuint shaderProgramID, GLuint vao) {
 		float scaleY = 1.0f;
 		for (const auto& cuboid : cuboids) {
-			glm::mat4 model = glm::translate(glm::mat4(1.0f), cuboid.position);
+			glm::vec3 drawPos = cuboid.position;
+			drawPos.y = cuboid.fallY;
+
+			glm::mat4 model = glm::translate(glm::mat4(1.0f), drawPos);
 			if (command_m) {
-				scaleY = 1.0f + 0.5f * sin(animationTime * cuboid.speed); // 1.0~1.5 사이로 변화
+				scaleY = 1.0f + 0.5f * sin(animationTime * cuboid.speed);
 			}
 			model = glm::scale(model, glm::vec3(cuboid.size.x, cuboid.size.y * scaleY, cuboid.size.z));
-			model = glm::translate(model, glm::vec3(0.0f, 0.5f, 0.0f)); // 밑면이 y=0에 위치하도록 조정
+			model = glm::translate(model, glm::vec3(0.0f, 0.5f, 0.0f));
 
 			GLint locModel = glGetUniformLocation(shaderProgramID, "model");
 			glUniformMatrix4fv(locModel, 1, GL_FALSE, glm::value_ptr(model));
-				
+
 			GLint objColorLocation = glGetUniformLocation(shaderProgramID, "objectColor");
 			glUniform3f(objColorLocation, cuboid.color.r, cuboid.color.g, cuboid.color.b);
 
@@ -171,6 +193,30 @@ char* filetobuf(const char* file)
 }
 
 
+float animation_speed = 0.05f;
+
+void updateAnimation(int value) {
+	static bool firstFalling = true;
+	if (firstFalling) {
+		bool stillFalling = cuboidManager->updateFalling(animation_speed);
+		glutPostRedisplay();
+		if (stillFalling) {
+			glutTimerFunc(16, updateAnimation, 0);
+		}
+		else {
+			firstFalling = false;
+			if (command_m) {
+				glutTimerFunc(16, updateAnimation, 0);
+			}
+		}
+		return;
+	}
+	if (command_m) {
+		animationTime += animation_speed;
+		glutPostRedisplay();
+		glutTimerFunc(16, updateAnimation, 0);
+	}
+}
 int main(int argc, char** argv) 			
 {	
 	//--- 윈도우 생성하기
@@ -217,23 +263,19 @@ int main(int argc, char** argv)
 	std::cout << "s : 미로 내 객체 생성" << std::endl;
 	std::cout << "Y : 양 방향 공전" << std::endl;
 	std::cout << "Y : 양 방향 공전" << std::endl;
+	std::cout << "+ : 애니메이션 속도 증가" << std::endl;
+	std::cout << "- : 애니메이션 속도 감소" << std::endl;
 	std::cout << "c : 모든 값 초기화" << std::endl;
 	std::cout << "q : 프로그램 종료" << std::endl;
 
 
 	cuboidManager = new CuboidManager(x, y);
 
+	glutTimerFunc(0, updateAnimation, 0);
+
 	glutMainLoop();				
 }
 
-
-void updateAnimation(int value) {
-	if (command_m) {
-		animationTime += 0.05f; // 프레임당 시간 증가
-		glutPostRedisplay();
-		glutTimerFunc(16, updateAnimation, 0); // 약 60fps
-	}
-}
 
 GLvoid keyboard(unsigned char key, int x, int y) {
 	switch (key) {
@@ -269,6 +311,18 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 		break;
 	case 'Y':
 		cameraOrbitAngle += glm::radians(5.0f);
+		glutPostRedisplay();
+		break;
+	case '+':
+		if (animation_speed < 0.2f)
+			animation_speed += 0.01f;
+		else animation_speed = 0.2f;
+		glutPostRedisplay();
+		break;
+	case '-':
+		if (animation_speed > 0.01f)
+			animation_speed -= 0.01f;
+		else animation_speed = 0.01f;
 		glutPostRedisplay();
 		break;
 	case 'v':
