@@ -39,7 +39,34 @@ GLuint vao, vbo[2];
 bool light_Frag = true;
 bool toggle_viewport = false;
 bool command_y = false;
-int x, y; // 큐브 수 -> 미로 크기로 사용
+int x, y;
+
+
+class MovableObject {
+public:
+	glm::vec3 position;
+	float size;
+	glm::vec3 color;
+	bool isIndependent;
+
+	MovableObject(const glm::vec3& pos, float s, const glm::vec3& col, bool independent = true)
+		: position(pos), size(s), color(col), isIndependent(independent) {
+	}
+
+	void draw(GLuint shaderProgramID, GLuint vao) {
+		glm::mat4 model = glm::translate(glm::mat4(1.0f), position);
+		model = glm::scale(model, glm::vec3(size));
+
+		GLint locModel = glGetUniformLocation(shaderProgramID, "model");
+		glUniformMatrix4fv(locModel, 1, GL_FALSE, glm::value_ptr(model));
+
+		GLint objColorLocation = glGetUniformLocation(shaderProgramID, "objectColor");
+		glUniform3f(objColorLocation, color.r, color.g, color.b);
+
+		glBindVertexArray(vao);
+		glDrawArrays(GL_TRIANGLES, 0, 36);
+	}
+};
 
 class Cuboid {
 public:
@@ -70,6 +97,8 @@ float cameraOrbitHeight = 5.0f;
 float cameraEyeZ = 0.0f;
 
 bool maze_generated = false;
+bool player_created = false;
+bool reset_animation = false;
 
 class CuboidManager {
 public:
@@ -78,6 +107,7 @@ public:
 	int rows, cols; // 미로의 행과 열 크기
 	bool isLow = false;
 	glm::ivec2 exitPosition;
+	MovableObject* player;
 
 	CuboidManager(int x, int y) : rows(y), cols(x) { // x는 열, y는 행에 대응
 		std::random_device rd;
@@ -88,12 +118,13 @@ public:
 
 		float startX = 0.0f;
 		float startZ = 0.0f;
+		float cell_size = 0.2f;
 
 		// 큐보이드 생성
 		for (int i = 0; i < rows; ++i) { // Z축 (행)
 			startX = 0.0f;
 			for (int j = 0; j < cols; ++j) { // X축 (열)
-				glm::vec3 sz(0.2f, size_dist(gen), 0.2f);
+				glm::vec3 sz(cell_size, size_dist(gen), cell_size);
 				glm::vec3 pos(startX, 0.0f, startZ);
 				glm::vec3 col(color_dist(gen), color_dist(gen), color_dist(gen));
 				float spd = speed_dist(gen);
@@ -102,25 +133,39 @@ public:
 
 				startX += sz.x;
 			}
-			startZ += 0.2f;
+			startZ += cell_size;
 		}
 		max_x = startX;
+
+		player = nullptr;
 	}
 
+	~CuboidManager() {
+		delete player;
+	}
+	void createPlayer() {
+		if (player) {
+			delete player; // 기존 플레이어가 있다면 삭제
+		}
+
+		player = new MovableObject(glm::vec3(0.0f), 0.18f, glm::vec3(1.0f, 1.0f, 0.0f), true);
+
+		// 미로가 생성되어 있다면 시작 위치로 배치
+		if (is_maze_mode) {
+			float cell_size = 0.2f;
+			glm::vec3 start_pos(
+				1.0f * cell_size + cell_size / 2.0f,
+				player->size / 2.0f,
+				1.0f * cell_size + cell_size / 2.0f
+			);
+			player->position = start_pos;
+		}
+
+	}
 	// 미로 생성 함수 (DFS 기반, 짝수/홀수 크기 모두 지원)
 	void generateMaze() {
 		// 1. 모든 셀을 벽으로 초기화
 		maze.assign(rows, std::vector<bool>(cols, true)); // true: 벽
-
-		// ⚠️ 크기가 매우 작은 경우 예외 처리
-		if (rows < 3 || cols < 3) {
-			// 매우 작은 크기의 경우 전체를 길로 만들고 종료
-			for (int i = 0; i < rows; ++i)
-				for (int j = 0; j < cols; ++j)
-					maze[i][j] = false;
-			updateCuboidsFromMaze();
-			return;
-		}
 
 		// 2. DFS를 위한 스택 및 시작점 설정
 		std::stack<glm::ivec2> stack;
@@ -135,10 +180,10 @@ public:
 		std::mt19937 gen(rd());
 
 		std::vector<glm::ivec2> directions = {
-			{0, -2}, // 북
-			{0, 2},  // 남
-			{2, 0},  // 동
-			{-2, 0}  // 서
+			{0, -2},
+			{0, 2},
+			{2, 0},
+			{-2, 0}
 		};
 
 		// 3. DFS 수행
@@ -184,6 +229,16 @@ public:
 
 		// 5. Cuboid 벡터 업데이트
 		updateCuboidsFromMaze();
+
+		if (player) {
+			float cell_size = 0.2f;
+			glm::vec3 start_pos(
+				1.0f * cell_size + cell_size / 2.0f,
+				player->size / 2.0f,
+				1.0f * cell_size + cell_size / 2.0f
+			);
+			player->position = start_pos;
+		}
 	}
 
 	// 미로 상태에 따라 큐보이드 업데이트
@@ -200,20 +255,15 @@ public:
 					// 원래 색상 유지
 				}
 				else { // 길 (Path)
-					// 출구인지 확인
-					if (j == exitPosition.x && i == exitPosition.y) {
-						// 출구는 낮은 높이로 표시하고 빨간색으로
-						cuboid.size.y = cuboid.min_height;
-						cuboid.color = glm::vec3(1.0f, 0.0f, 0.0f); // 빨간색 출구
-					}
 					// 시작점인지 확인 (1, 1)
-					else if (j == 1 && i == 1) {
+					if (j == 1 && i == 1) {
 						cuboid.size.y = cuboid.min_height;
 						cuboid.color = glm::vec3(0.0f, 1.0f, 0.0f); // 초록색 시작점
 					}
 					else {
-						// 일반 길은 완전히 제거
+						// 출구 포함해서 모든 길은 완전히 제거
 						cuboid.size.y = 0.0f;
+						cuboid.color = glm::vec3(0.0f, 0.0f, 0.0f); // 길은 검은색으로
 					}
 				}
 			}
@@ -273,11 +323,12 @@ public:
 		for (int idx = 0; idx < cuboids.size(); ++idx) {
 			const auto& cuboid = cuboids[idx];
 
-			// 미로 모드에서 길(path)인 경우 그리지 않음
+			// 미로 모드에서 길(path)인 경우 (시작/출구 마커 제외) 건너뛰기
 			if (is_maze_mode && !maze.empty()) {
 				int i = idx / cols; // 행
 				int j = idx % cols; // 열
-				if (!maze[i][j]) { // 길인 경우 건너뛰기
+				// 일반 길 (높이가 0.0f인 큐보이드)는 그리지 않음
+				if (!maze[i][j] && cuboid.size.y == 0.0f) {
 					continue;
 				}
 			}
@@ -309,15 +360,10 @@ public:
 			glBindVertexArray(vao);
 			glDrawArrays(GL_TRIANGLES, 0, 36);
 		}
-	}
-	std::vector<glm::ivec2> getCornerCoords(int width, int height) const {
-		// 좌상, 우상, 좌하, 우하
-		std::vector<glm::ivec2> corners;
-		corners.push_back(glm::ivec2(0, 0));
-		corners.push_back(glm::ivec2(width - 1, 0));
-		corners.push_back(glm::ivec2(0, height - 1));
-		corners.push_back(glm::ivec2(width - 1, height - 1)); // 우하
-		return corners;
+
+		if (is_maze_mode && player) {
+			player->draw(shaderProgramID, vao);
+		}
 	}
 };
 
@@ -348,6 +394,12 @@ float animation_speed = 0.05f;
 
 void updateAnimation(int value) {
 	static bool firstFalling = true;
+
+	if (reset_animation) {
+		firstFalling = true;
+		reset_animation = false;
+	}
+
 	if (firstFalling && !is_maze_mode) {
 		bool stillFalling = cuboidManager->updateFalling(animation_speed);
 		glutPostRedisplay();
@@ -467,17 +519,48 @@ GLvoid keyboard(unsigned char key, int x, int y) {
 	case 'r':
 		if (cuboidManager && !maze_generated) {
 			cuboidManager->generateMaze();
-			maze_generated = true; 
+			maze_generated = true;
+			command_m = false; // 미로 생성 시 애니메이션 정지
 		}
 		else if (maze_generated) {
+			// 이미 미로가 생성됨
+		}
+		glutPostRedisplay();
+		break;
+	case 's':
+		if (cuboidManager && is_maze_mode) {
+			cuboidManager->createPlayer();
+			player_created = true;
 		}
 		glutPostRedisplay();
 		break;
 	case 'c':
-		maze_generated = false; 
+		// 모든 전역 변수 초기화
+		maze_generated = false;
 		is_maze_mode = false;
+		player_created = false;
+		command_m = false;
+		reset_animation = true;
+
+		// 애니메이션 관련 변수 초기화
+		animationTime = 0.0f;
+		animation_speed = 0.05f;
+
+		// 카메라 관련 변수 초기화
+		cameraOrbitAngle = 0.0f;
+		cameraOrbitRadius = 7.0f;
+		cameraOrbitHeight = 5.0f;
+		cameraEyeZ = 0.0f;
+
+		// 뷰포트 초기화
+		toggle_viewport = false;
+
+		// CuboidManager 재생성
 		delete cuboidManager;
 		cuboidManager = new CuboidManager(::x, ::y);
+
+		glutTimerFunc(0, updateAnimation, 0);
+
 		glutPostRedisplay();
 		break;
 	case '+':
@@ -639,6 +722,11 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 	GLint locprojection = glGetUniformLocation(shaderProgramID, "projection");
 	glUniformMatrix4fv(locprojection, 1, GL_FALSE, glm::value_ptr(projection));
 
+	// 💡 카메라 위치를 fragment shader에 전달 (조명 계산을 위해 필요)
+	GLint viewPosLocation = glGetUniformLocation(shaderProgramID, "viewPos");
+	glUniform3f(viewPosLocation, camera_eye.x, camera_eye.y, camera_eye.z);
+
+
 	GLint locModel = glGetUniformLocation(shaderProgramID, "model");
 	glm::mat4 model = glm::mat4(1.0f);
 	glUniformMatrix4fv(locModel, 1, GL_FALSE, glm::value_ptr(model));
@@ -664,6 +752,9 @@ GLvoid drawScene() 				//--- 콜백 함수: 출력 콜백 함수
 
 	glUniformMatrix4fv(locview, 1, GL_FALSE, glm::value_ptr(top_view));
 	glUniformMatrix4fv(locprojection, 1, GL_FALSE, glm::value_ptr(top_projection));
+
+	// 미니맵에서도 카메라 위치 업데이트 (필요하다면)
+	glUniform3f(viewPosLocation, top_eye.x, top_eye.y, top_eye.z);
 
 	cuboidManager->draw(shaderProgramID, vao);
 
@@ -740,7 +831,6 @@ GLuint make_shaderProgram()
 	glGetProgramiv(shaderID, GL_LINK_STATUS, &result);
 	if (!result) {
 		glGetProgramInfoLog(shaderID, 512, NULL, errorLog);
-		std::cerr << "ERROR: shader program 연결 실패\n" << errorLog << std::endl;
 		return 0; // false 대신 0 반환
 	}
 
